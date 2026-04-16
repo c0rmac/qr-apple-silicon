@@ -1,6 +1,6 @@
 # qr-apple-silicon
 
-Hardware-accelerated QR decomposition for Apple Silicon, built on top of [MLX](https://github.com/ml-explore/mlx) and Metal.
+Hardware-accelerated QR decomposition for Apple Silicon, built on top of [MLX](https://github.com/ml-explore/mlx) and Metal, by leveraging the GPU to maximise performance.
 
 Exposes a single function, `custom_math::qr_accelerated`, that accepts a batched MLX array and returns Q and R — automatically routing to the most efficient Metal kernel for the given matrix dimensions and batch size. See [benchmark results](BENCHMARK.md) for GPU vs CPU timings across a range of matrix shapes and batch sizes.
 
