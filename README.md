@@ -69,11 +69,19 @@ This is the *thin* (or *reduced*) QR decomposition. The full decomposition exten
 
 For example, given:
 
-$$A = \begin{pmatrix} 1 & 2 & 3 \\ 4 & 5 & 6 \\ 7 & 8 & 9 \end{pmatrix}$$
+```
+A = [[ 1,  2,  3 ],
+     [ 4,  5,  6 ],
+     [ 7,  8,  9 ]]
+```
 
 the thin QR decomposition yields:
 
-$$Q = \begin{pmatrix} -0.123 & 0.904 & 0.408 \\ -0.492 & 0.301 & -0.816 \\ -0.862 & -0.301 & 0.408 \end{pmatrix}, \quad R = \begin{pmatrix} -8.124 & -9.601 & -11.078 \\ 0 & 0.905 & 1.809 \\ 0 & 0 & 0 \end{pmatrix}$$
+```
+Q = [[-0.123,  0.904,  0.408 ],        R = [[-8.124, -9.601, -11.078 ],
+     [-0.492,  0.301, -0.816 ],              [  0.0,   0.905,   1.809 ],
+     [-0.862, -0.301,  0.408 ]]              [  0.0,   0.0,     0.0   ]]
+```
 
 One can verify $QR = A$ and $Q^T Q = I_3$.
 
