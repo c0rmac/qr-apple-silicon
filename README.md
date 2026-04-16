@@ -217,8 +217,6 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --target benchmark_qr
 ```
 
-Run with the default 2 GB memory limit:
-
 ```sh
 ./build/benchmark_qr
 ```
@@ -242,4 +240,4 @@ static const std::vector<BenchConfig> SMALL_CONFIGS = {
 };
 ```
 
-Each configuration runs for 5 timed repetitions (2 warmup discarded) and reports GPU time, CPU time (MLX / LAPACK), speedup, and mean Frobenius reconstruction error `||QR - A||_F` for both.
+Each configuration runs for 5 timed repetitions (2 warmup discarded) and reports GPU time, CPU time (MLX CPU), speedup, and mean Frobenius reconstruction error `||QR - A||_F` for both.

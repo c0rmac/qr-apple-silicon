@@ -1,6 +1,6 @@
 # Benchmark Results
 
-GPU (Metal shader) vs CPU (MLX / LAPACK) on Apple Silicon.  
+GPU (Metal shader) vs CPU (MLX) on Apple Silicon.  
 Timing is the average of 5 runs with 2 warmup runs discarded.  
 Skipped cells (—) exceeded the per-config batch limit.
 
@@ -35,7 +35,7 @@ Skipped cells (—) exceeded the per-config batch limit.
 ### Observations
 
 - At very small batch sizes (≤ 10), GPU launch overhead can exceed the compute cost, resulting in sub-1x speedup for small matrices. This is expected — the GPU only becomes worthwhile once there is enough work to amortise the dispatch cost.
-- Speedup scales strongly with batch size. At batch=15000, an 8×8 workload reaches **24x** over LAPACK.
+- Speedup scales strongly with batch size. At batch=15000, an 8×8 workload reaches **24x** over MLX CPU.
 - The crossover from CPU-faster to GPU-faster occurs around batch=50 for most small configurations.
 
 ---
@@ -56,6 +56,6 @@ Skipped cells (—) exceeded the per-config batch limit.
 
 ### Observations
 
-- At batch=1, the GPU is slower than LAPACK for 512×512 and 1024×512 matrices. A single large matrix does not generate enough parallelism to saturate the GPU's shader multiprocessors.
+- At batch=1, the GPU is slower than MLX CPU for 512×512 and 1024×512 matrices. A single large matrix does not generate enough parallelism to saturate the GPU's shader multiprocessors.
 - Speedup grows steadily with batch size, reaching **2.51x** at batch=32 for 512×512.
-- Even at batch=1, the GPU outperforms LAPACK on 5000×5000 (**1.62x**), where the sheer volume of in-matrix computation saturates the shader cores without needing a large batch.
+- Even at batch=1, the GPU outperforms MLX CPU on 5000×5000 (**1.62x**), where the sheer volume of in-matrix computation saturates the shader cores without needing a large batch.
