@@ -87,6 +87,11 @@ One can verify $QR = A$ and $Q^T Q = I_3$.
 
 The decomposition is fundamental to solving linear least-squares problems, performing Gram-Schmidt orthogonalisation, and as the core step in the QR algorithm for computing eigenvalues.
 
+### References
+
+- G. H. Golub and C. F. Van Loan, [*Matrix Computations*](https://jhupbooks.press.jhu.edu/title/matrix-computations), 4th ed. Johns Hopkins University Press, 2013. §5.1 — Householder reflections and QR factorisation.
+- R. Schreiber and C. Van Loan, ["A storage-efficient WY representation for products of Householder transformations"](https://epubs.siam.org/doi/10.1137/0910005), *SIAM Journal on Scientific and Statistical Computing*, vol. 10, no. 1, pp. 53–57, 1989 — the Compact WY representation used for block updates.
+
 ### The Householder Reflection
 
 Both shaders build $Q$ and $R$ by successively applying **Householder reflections**. A Householder reflector is an orthogonal matrix of the form:
