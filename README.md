@@ -2,7 +2,7 @@
 
 Hardware-accelerated QR decomposition for Apple Silicon, built on top of [MLX](https://github.com/ml-explore/mlx) and Metal.
 
-Exposes a single function, `custom_math::qr_accelerated`, that accepts a batched MLX array and returns Q and R — automatically routing to the most efficient Metal kernel for the given matrix dimensions and batch size.
+Exposes a single function, `custom_math::qr_accelerated`, that accepts a batched MLX array and returns Q and R — automatically routing to the most efficient Metal kernel for the given matrix dimensions and batch size. See [benchmark results](BENCHMARK.md) for GPU vs CPU timings across a range of matrix shapes and batch sizes.
 
 
 ## API
@@ -95,7 +95,7 @@ $$H = I - \tau v v^T, \quad \tau \in \mathbb{R}, \quad v \in \mathbb{R}^M$$
 
 chosen so that $H x = \mu e_k$ — i.e. it zeros out every entry of a column vector $x$ below position $k$, leaving a single scalar $\mu$ on the diagonal. The sign of $\mu$ is chosen to avoid catastrophic cancellation:
 
-$$\mu = -\text{sign}(\alpha)||x||_2$$
+$$\mu = -\text{sign}(\alpha)\|x\|_2$$
 
 where $\alpha = x_k$ is the pivot element. The reflector vector $v$ is then:
 
@@ -217,19 +217,29 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --target benchmark_qr
 ```
 
-Run with defaults (batch of 8 for large matrices):
+Run with the default 2 GB memory limit:
 
 ```sh
 ./build/benchmark_qr
 ```
 
-Or pass custom batch sizes:
+The benchmark sweeps every configuration automatically:
 
-```sh
-# benchmark_qr [batch_small] [batch_large]
-# batch_small: used for M < 512  (default: 10000)
-# batch_large: used for M >= 512 (default: 8)
-./build/benchmark_qr 10000 8
+| Class | Configs (M × N) | Batch sizes |
+|---|---|---|
+| Small (M < 512) | 64×64, 128×64, 256×128, 512×256 | 100, 500, 1000, 5000, 10000, 15000 |
+| Large (M ≥ 512) | 512×512, 1024×512, 5000×5000 | 1, 8, 16, 32 |
+
+Per-config batch limits are set via the `max_batch` field in `SMALL_CONFIGS` at the top of `tests/benchmark_qr.cpp`. Any batch size above this value is skipped for that config and shown as `--` in the table. Set `max_batch = 0` to run a config at all batch sizes.
+
+```cpp
+// tests/benchmark_qr.cpp
+static const std::vector<BenchConfig> SMALL_CONFIGS = {
+    { 64,  64},
+    {128,  64},
+    {256, 128, 5000},  // skipped for batch > 5000
+    {512, 256, 1000},  // skipped for batch > 1000 — raise or set to 0 if memory allows
+};
 ```
 
-The benchmark runs each configuration for 5 timed repetitions (2 warmup discarded) and reports GPU time, CPU time (MLX / LAPACK), speedup, and mean Frobenius reconstruction error `||QR - A||_F` for both.
+Each configuration runs for 5 timed repetitions (2 warmup discarded) and reports GPU time, CPU time (MLX / LAPACK), speedup, and mean Frobenius reconstruction error `||QR - A||_F` for both.

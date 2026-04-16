@@ -397,9 +397,15 @@ kernel void pack_batch_memory(
     uint b = tid.z;
 
     if (row < original_M && col < original_N) {
+        // Valid data from the user
         uint src_idx = b * (original_M * original_N) + row * original_N + col;
         uint dst_idx = b * (M_pad * N_pad) + col * M_pad + row;
         dst[dst_idx] = src[src_idx];
+    } else if (row < M_pad && col < N_pad) {
+        // Explicitly clear the padded region with an Identity matrix
+        // Prevents uninitialized memory from creating NaNs during AMX tile loading
+        uint dst_idx = b * (M_pad * N_pad) + col * M_pad + row;
+        dst[dst_idx] = (row == col) ? 1.0f : 0.0f;
     }
 }
 
@@ -530,6 +536,11 @@ kernel void standard_householder_qr_float32(
         for (uint i = simd_lane_id; i < (BLOCK_SIZE * BLOCK_SIZE); i += SIMD_GROUP_SIZE) {
             shared_mem->compact_T[i] = 0.0f;
             shared_mem->clean_Y[i] = 0.0f;
+        }
+        // Explicitly zero the scalars to prevent NaN propagation <---
+        if (simd_lane_id < BLOCK_SIZE) {
+             shared_mem->tau_values[simd_lane_id] = 0.0f;
+             shared_mem->R_diag[simd_lane_id] = 1.0f;
         }
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
@@ -804,8 +815,8 @@ kernel void standard_householder_qr_float32(
         // STEP 6: RESTORE R DIAGONAL
         // =====================================================================
         if (simd_group_id == 0 && simd_lane_id == 0) {
-            for (uint k = 0; k < BLOCK_SIZE; ++k) {
-                A[(block_start + k) + (block_start + k) * M_pad] = shared_mem->R_diag[k]; // FIX: M_pad
+            for (uint k = 0; k < BLOCK_SIZE && (block_start + k) < min_dim; ++k) {
+                A[(block_start + k) + (block_start + k) * M_pad] = shared_mem->R_diag[k];
             }
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
