@@ -95,7 +95,7 @@ $$H = I - \tau v v^T, \quad \tau \in \mathbb{R}, \quad v \in \mathbb{R}^M$$
 
 chosen so that $H x = \mu e_k$ — i.e. it zeros out every entry of a column vector $x$ below position $k$, leaving a single scalar $\mu$ on the diagonal. The sign of $\mu$ is chosen to avoid catastrophic cancellation:
 
-$$\mu = -\text{sign}(\alpha)\|x\|_2$$
+$$\mu = -\text{sign}(\alpha)\|\| x \|\|_2$$
 
 where $\alpha = x_k$ is the pivot element. The reflector vector $v$ is then:
 
