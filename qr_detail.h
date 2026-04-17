@@ -10,6 +10,9 @@ qr_unblocked(const mlx::core::array& a);
 
 // Dispatched when M <= 512. Multi-pass Streaming AMX panel factorization.
 std::pair<mlx::core::array, mlx::core::array>
-qr_streaming_amx(const mlx::core::array& a);
+qr_streaming_amx_complete(const mlx::core::array& a);
+
+std::pair<mlx::core::array, mlx::core::array>
+qr_streaming_amx_reduced(const mlx::core::array& a);
 
 } // namespace custom_math::detail

@@ -282,13 +282,13 @@ int main(int argc, char* argv[]) {
         return results;
     };
 
-    std::cout << "\nRunning small benchmarks...\n";
-    auto small_results = collect(SMALL_CONFIGS, SMALL_BATCHES);
-    print_table("Small dimensions  —  M < 512",  SMALL_CONFIGS, SMALL_BATCHES, small_results);
-
     std::cout << "Running large benchmarks...\n";
     auto large_results = collect(LARGE_CONFIGS, LARGE_BATCHES);
     print_table("Large dimensions  —  M >= 512", LARGE_CONFIGS, LARGE_BATCHES, large_results);
+
+    std::cout << "\nRunning small benchmarks...\n";
+    auto small_results = collect(SMALL_CONFIGS, SMALL_BATCHES);
+    print_table("Small dimensions  —  M < 512",  SMALL_CONFIGS, SMALL_BATCHES, small_results);
 
     std::cout << "\n";
     return 0;

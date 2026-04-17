@@ -20,10 +20,10 @@ static uint pad_up_amx(uint v, uint multiple) {
 }
 
 static id<MTLLibrary> load_library_amx(id<MTLDevice> device) {
-#ifndef QR_STREAMING_AMX_METALLIB_PATH
-#  error "QR_STREAMING_AMX_METALLIB_PATH must be set by CMake"
+#ifndef QR_STREAMING_AMX_REDUCED_METALLIB_PATH
+#  error "QR_STREAMING_AMX_REDUCED_METALLIB_PATH must be set by CMake"
 #endif
-    NSString* path = @(QR_STREAMING_AMX_METALLIB_PATH);
+    NSString* path = @(QR_STREAMING_AMX_REDUCED_METALLIB_PATH);
     NSError* err = nil;
     id<MTLLibrary> lib = [device newLibraryWithURL:[NSURL fileURLWithPath:path] error:&err];
     if (!lib) {
@@ -60,18 +60,18 @@ struct StreamingAMXPipelines {
     id<MTLComputePipelineState> pso_t_mat;
     id<MTLComputePipelineState> pso_update;
     id<MTLComputePipelineState> pso_haar;
-    id<MTLComputePipelineState> pso_unpk_R; // Added Unpack Shader
-    id<MTLComputePipelineState> pso_unpk_Q; // Added Unpack Shader
+    id<MTLComputePipelineState> pso_unpk_R;
+    id<MTLComputePipelineState> pso_unpk_Q;
 };
 
 struct StreamingWorkspace {
     id<MTLBuffer> buf_A;
     id<MTLBuffer> buf_Q;
-    id<MTLBuffer> buf_R_diag; // Renamed to avoid confusion
+    id<MTLBuffer> buf_R_diag;
     id<MTLBuffer> buf_tau;
     id<MTLBuffer> buf_T;
-    id<MTLBuffer> buf_R_out;  // Added exact-size output buffer
-    id<MTLBuffer> buf_Q_out;  // Added exact-size output buffer
+    id<MTLBuffer> buf_R_out;
+    id<MTLBuffer> buf_Q_out;
 };
 
 struct MetalAMXContext {
@@ -109,17 +109,24 @@ struct MetalAMXContext {
         return pso_cache[key] = p;
     }
 
-    StreamingWorkspace get_workspace(uint batch, uint M_pad, uint N_pad, uint M, uint N, uint K) {
+    StreamingWorkspace get_workspace(uint batch, uint M_pad, uint N_pad, uint K_pad, uint M, uint N, uint K) {
         auto key = std::make_tuple(batch, M_pad, N_pad);
         if (workspace_cache.count(key)) return workspace_cache[key];
 
         StreamingWorkspace w;
         MTLResourceOptions opt = MTLResourceStorageModeShared;
+
+        uint num_blocks = K_pad / 32;
+
         w.buf_A      = [dev newBufferWithLength:((size_t)batch * M_pad * N_pad * sizeof(float)) options:opt];
-        w.buf_Q      = [dev newBufferWithLength:((size_t)batch * M_pad * M_pad * sizeof(float)) options:opt];
+
+        // Q is strictly bounded by K_pad for Economic QR
+        w.buf_Q      = [dev newBufferWithLength:((size_t)batch * M_pad * K_pad * sizeof(float)) options:opt];
         w.buf_R_diag = [dev newBufferWithLength:((size_t)batch * M_pad * sizeof(float))         options:opt];
         w.buf_tau    = [dev newBufferWithLength:((size_t)batch * N_pad * sizeof(float))         options:opt];
-        w.buf_T      = [dev newBufferWithLength:((size_t)batch * 32 * 32 * sizeof(float))       options:opt];
+
+        // T-Matrix expanded to hold ALL blocks simultaneously
+        w.buf_T      = [dev newBufferWithLength:((size_t)batch * num_blocks * 32 * 32 * sizeof(float)) options:opt];
 
         // Exact size output buffers
         w.buf_R_out  = [dev newBufferWithLength:((size_t)batch * K * N * sizeof(float)) options:opt];
@@ -133,7 +140,7 @@ struct MetalAMXContext {
 // MAIN ENTRY POINT
 // =============================================================================
 
-std::pair<array, array> qr_streaming_amx(const array& a) {
+std::pair<array, array> qr_streaming_amx_reduced(const array& a) {
     if (a.ndim() < 2)
         throw std::invalid_argument("[qr_streaming_amx] Input must be at least a 2D matrix.");
 
@@ -153,10 +160,11 @@ std::pair<array, array> qr_streaming_amx(const array& a) {
 
     const uint M_pad = pad_up_amx(original_M, 32);
     const uint N_pad = pad_up_amx(original_N, 32);
+    const uint K_pad = pad_up_amx(original_K, 32);
 
     static MetalAMXContext ctx;
     StreamingAMXPipelines p = ctx.get_pipelines(M_pad, N_pad);
-    StreamingWorkspace w    = ctx.get_workspace(batch, M_pad, N_pad, original_M, original_N, original_K);
+    StreamingWorkspace w    = ctx.get_workspace(batch, M_pad, N_pad, K_pad, original_M, original_N, original_K);
 
     id<MTLBuffer> buf_src = [ctx.dev newBufferWithBytesNoCopy:(void*)a_f32.data<float>()
                                                        length:a_f32.nbytes()
@@ -166,6 +174,9 @@ std::pair<array, array> qr_streaming_amx(const array& a) {
     id<MTLCommandBuffer>         cmd = [ctx.queue commandBuffer];
     id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
 
+    // =========================================================
+    // 0. ROW-TO-COL MAJOR TRANSPOSE
+    // =========================================================
     [enc setComputePipelineState:p.pso_transpose];
     [enc setBuffer:buf_src  offset:0 atIndex:0];
     [enc setBuffer:w.buf_A  offset:0 atIndex:1];
@@ -173,11 +184,11 @@ std::pair<array, array> qr_streaming_amx(const array& a) {
     [enc setBytes:&original_N length:sizeof(uint) atIndex:3];
     [enc dispatchThreads:MTLSizeMake(N_pad, M_pad, batch) threadsPerThreadgroup:MTLSizeMake(16, 16, 1)];
 
-    [enc setComputePipelineState:p.pso_init_q];
-    [enc setBuffer:w.buf_Q offset:0 atIndex:0];
-    [enc dispatchThreads:MTLSizeMake(M_pad, M_pad, batch) threadsPerThreadgroup:MTLSizeMake(16, 16, 1)];
-
-    for (uint block_start = 0; block_start < original_N; block_start += 32) {
+    // =========================================================
+    // 1. FORWARD PASS: Factorize A & Generate T-Matrices
+    // =========================================================
+    // Bounded by original_K for proper wide-matrix math
+    for (uint block_start = 0; block_start < original_K; block_start += 32) {
         [enc setComputePipelineState:p.pso_panel];
         [enc setBuffer:w.buf_A      offset:0 atIndex:0];
         [enc setBuffer:w.buf_R_diag offset:0 atIndex:1];
@@ -192,30 +203,49 @@ std::pair<array, array> qr_streaming_amx(const array& a) {
         [enc setBytes:&block_start length:sizeof(uint) atIndex:3];
         [enc dispatchThreadgroups:MTLSizeMake(1, 1, batch) threadsPerThreadgroup:MTLSizeMake(1024, 1, 1)];
 
+        // Update Trailing Matrix A ONLY
         uint update_cols_A = (N_pad - block_start);
         if (update_cols_A > 32) {
             uint groups_x    = (update_cols_A - 32 + 31) / 32;
-            uint is_Q_update = 0;
+            uint update_mode = 0; // Mode 0 = Update A
             [enc setComputePipelineState:p.pso_update];
             [enc setBuffer:w.buf_A offset:0 atIndex:0];
-            [enc setBuffer:w.buf_Q offset:0 atIndex:1];
+            [enc setBuffer:w.buf_Q offset:0 atIndex:1]; // Dummy bind, ignored in Mode 0
             [enc setBuffer:w.buf_T offset:0 atIndex:2];
             [enc setBytes:&block_start length:sizeof(uint) atIndex:3];
-            [enc setBytes:&is_Q_update  length:sizeof(uint) atIndex:4];
+            [enc setBytes:&update_mode  length:sizeof(uint) atIndex:4];
             [enc dispatchThreadgroups:MTLSizeMake(groups_x, 1, batch) threadsPerThreadgroup:MTLSizeMake(128, 1, 1)];
         }
+    }
 
-        uint is_Q_update = 1;
-        uint groups_Q_x  = (M_pad + 31) / 32;
+    // =========================================================
+    // 2. INITIALIZE ECONOMIC Q
+    // =========================================================
+    [enc setComputePipelineState:p.pso_init_q];
+    [enc setBuffer:w.buf_Q offset:0 atIndex:0];
+    // Q is strictly M_pad x K_pad
+    [enc dispatchThreads:MTLSizeMake(K_pad, M_pad, batch) threadsPerThreadgroup:MTLSizeMake(16, 16, 1)];
+
+    // =========================================================
+    // 3. BACKWARD PASS: Natively Build Q
+    // =========================================================
+    int start_block = ((original_K + 31) / 32) * 32 - 32;
+    for (int block_start = start_block; block_start >= 0; block_start -= 32) {
+        uint update_mode = 2; // Mode 2 = Backward Q Accumulation
+        uint groups_Q_x  = (K_pad + 31) / 32;
+
         [enc setComputePipelineState:p.pso_update];
-        [enc setBuffer:w.buf_A offset:0 atIndex:0];
+        [enc setBuffer:w.buf_A offset:0 atIndex:0]; // A safely holds our Householder Y vectors
         [enc setBuffer:w.buf_Q offset:0 atIndex:1];
         [enc setBuffer:w.buf_T offset:0 atIndex:2];
         [enc setBytes:&block_start length:sizeof(uint) atIndex:3];
-        [enc setBytes:&is_Q_update  length:sizeof(uint) atIndex:4];
+        [enc setBytes:&update_mode length:sizeof(uint) atIndex:4];
         [enc dispatchThreadgroups:MTLSizeMake(groups_Q_x, 1, batch) threadsPerThreadgroup:MTLSizeMake(128, 1, 1)];
     }
 
+    // =========================================================
+    // 4. HAAR CORRECTION
+    // =========================================================
     [enc setComputePipelineState:p.pso_haar];
     [enc setBuffer:w.buf_A offset:0 atIndex:0];
     [enc setBuffer:w.buf_Q offset:0 atIndex:1];
@@ -224,8 +254,12 @@ std::pair<array, array> qr_streaming_amx(const array& a) {
     [enc setBytes:&original_K length:sizeof(uint) atIndex:4];
     [enc dispatchThreadgroups:MTLSizeMake(1, 1, batch) threadsPerThreadgroup:MTLSizeMake(1024, 1, 1)];
 
-    // --- NEW: Unpack R (Padded Col-major -> Exact Row-major + Triu) ---
+    // =========================================================
+    // 5. UNPACK AND EXPORT
+    // =========================================================
     MTLSize memory_threads = MTLSizeMake(16, 16, 1);
+
+    // --- Unpack R (Padded Col-major -> Exact Row-major + Triu) ---
     [enc setComputePipelineState:p.pso_unpk_R];
     [enc setBuffer:w.buf_A offset:0 atIndex:0];
     [enc setBuffer:w.buf_R_out offset:0 atIndex:1];
@@ -236,13 +270,14 @@ std::pair<array, array> qr_streaming_amx(const array& a) {
     [enc setBytes:&N_pad length:sizeof(uint) atIndex:6];
     [enc dispatchThreads:MTLSizeMake(original_N, original_K, batch) threadsPerThreadgroup:memory_threads];
 
-    // --- NEW: Unpack Q (Padded Col-major -> Exact Row-major) ---
+    // --- Unpack Q (Padded Col-major -> Exact Row-major) ---
     [enc setComputePipelineState:p.pso_unpk_Q];
     [enc setBuffer:w.buf_Q offset:0 atIndex:0];
     [enc setBuffer:w.buf_Q_out offset:0 atIndex:1];
     [enc setBytes:&original_M length:sizeof(uint) atIndex:2];
     [enc setBytes:&original_K length:sizeof(uint) atIndex:3];
     [enc setBytes:&M_pad length:sizeof(uint) atIndex:4];
+    [enc setBytes:&K_pad length:sizeof(uint) atIndex:5]; // Binding added
     [enc dispatchThreads:MTLSizeMake(original_K, original_M, batch) threadsPerThreadgroup:memory_threads];
 
     [enc endEncoding];
@@ -254,7 +289,7 @@ std::pair<array, array> qr_streaming_amx(const array& a) {
                                  + cmd.error.localizedDescription.UTF8String);
     }
 
-    // 4. Instant MLX Handoff
+    // 6. Instant MLX Handoff
     Shape R_shape(shape.begin(), shape.end());
     R_shape[R_shape.size() - 2] = original_K;
 

@@ -18,26 +18,33 @@ qr_accelerated(const mlx::core::array& a) {
 
     uint max_dim = std::max(M, N);
 
-    // 2. The Single-Core Capacity Limit
+    // 2. The Micro-Matrix Edge Case (Complete QR)
+    // For strictly square matrices less than 8x8 with low batch counts,
+    // we bypass the standard heuristics and build the full M x M Q matrix.
+    if (M == N && M <= 8 && batch <= 16) {
+        return detail::qr_streaming_amx_complete(a);
+    }
+
+    // 3. The Single-Core Capacity Limit
     // Matrices this large will choke a single SM doing O(M^2) Q-accumulation.
     // We MUST use the grid-parallel streaming shader.
     if (max_dim >= 512) {
-        return detail::qr_streaming_amx(a);
+        return detail::qr_streaming_amx_reduced(a);
     }
 
-    // 3. The High-Occupancy Batch Limit
+    // 4. The High-Occupancy Batch Limit
     // If the matrices are < 512, and we have enough of them to fill the GPU cores,
     // the single-kernel unblocked shader avoids host-loop launch overhead.
     if (batch >= 16) {
         return detail::qr_unblocked(a);
     }
 
-    // 4. The Starvation Zone vs. Latency Floor (Batch < 16)
+    // 5. The Starvation Zone vs. Latency Floor (Batch < 16)
     // If the batch is small, we want to parallelize intra-matrix to utilize the GPU.
     // However, if the matrix is < 128, the multi-kernel launch overhead of AMX
     // is slower than just running it on a single core.
     if (max_dim >= 128) {
-        return detail::qr_streaming_amx(a);
+        return detail::qr_streaming_amx_reduced(a);
     } else {
         return detail::qr_unblocked(a);
     }
